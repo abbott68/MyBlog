@@ -1,0 +1,37 @@
+<!-- article.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Article - {{.Article.Title}}</title>
+</head>
+<body>
+<h2>{{.Article.Title}}</h2>
+<p>{{.Article.Content}}</p>
+<p>Author: {{.Article.Author}}</p>
+<p>Created At: {{.Article.CreatedAt}}</p>
+
+<h3>Comments</h3>
+{{range .Comments}}
+<div>
+  <p>{{.Content}}</p>
+  <p>Author: {{.Author}}</p>
+  <p>Created At: {{.CreatedAt}}</p>
+</div>
+{{end}}
+
+<h3>Add Comment</h3>
+<form method="POST" action="/new-comment/{{.Article.ID}}">
+  <div>
+    <label for="content">Content:</label>
+    <textarea id="content" name="content" rows="3" required></textarea>
+  </div>
+  <div>
+    <label for="author">Author:</label>
+    <input type="text" id="author" name="author" required>
+  </div>
+  <div>
+    <button type="submit">Submit</button>
+  </div>
+</form>
+</body>
+</html>

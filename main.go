@@ -2,331 +2,121 @@ package main
 
 import (
 	"fmt"
-	"log"
-	"math"
-	"net/http"
-	"strconv"
-	"text/template"
-	"time"
-
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"html/template"
+	"k8s.io/kubernetes/pkg/kubelet/util/store"
+	"log"
+	"net/http"
+	"strconv"
+	"time"
 )
 
-// Article represents a blog article
+var db *gorm.DB // 全局变量用于存储数据库连接
+type User struct {
+	gorm.Model
+	Username string `gorm:"unique"`
+	Password string
+}
+
+type Pagination struct {
+	TotalPages   int
+	CurrentPage  int
+	PageSize     int
+	TotalRecords int
+}
+
+const pageSize = 10
+
+// Article 文章模型
 type Article struct {
-	ID        int
+	ID        uint `gorm:"primaryKey"`
 	Title     string
 	Content   string
 	Author    string
 	CreatedAt time.Time
+	Comments  []Comment
 }
 
-// Comment represents a comment on a blog article
+// Comment 评论模型
 type Comment struct {
-	ID        int
-	ArticleID int
-	Content   string
-	Author    string
-	CreatedAt time.Time
-}
-
-var (
-	articles  []Article
-	comments  []Comment
-	articleID int
-	commentID int
-	templates *template.Template
-)
-
-func main() {
-	// Initialize templates
-	templates = template.Must(template.ParseGlob("templates/*.html"))
-
-	// Create some initial articles
-	articles = append(articles,
-		Article{ID: getNextArticleID(), Title: "First Article", Content: "This is the first article.", Author: "John Doe", CreatedAt: time.Now()},
-		Article{ID: getNextArticleID(), Title: "Second Article", Content: "This is the second article.", Author: "Jane Smith", CreatedAt: time.Now()},
-	)
-
-	// Create a router
-	router := mux.NewRouter()
-
-	// Define routes
-	router.HandleFunc("/", homeHandler).Methods("GET")
-	router.HandleFunc("/article/{id}", articleHandler).Methods("GET")
-	router.HandleFunc("/new-article", newArticleHandler).Methods("GET", "POST")
-	router.HandleFunc("/edit-article/{id}", editArticleHandler).Methods("GET", "POST")
-	router.HandleFunc("/delete-article/{id}", deleteArticleHandler).Methods("POST")
-	router.HandleFunc("/new-comment/{id}", newCommentHandler).Methods("POST")
-
-	// Start the server
-	log.Println("Server started on http://localhost:8000")
-	log.Fatal(http.ListenAndServe(":8000", router))
-}
-
-func getNextArticleID() int {
-	articleID++
-	return articleID
-}
-
-func getNextCommentID() int {
-	commentID++
-	return commentID
-}
-
-func homeHandler(w http.ResponseWriter, r *http.Request) {
-	data := struct {
-		Articles []Article
-	}{
-		Articles: articles,
-	}
-
-	renderTemplate(w, "home.html", data)
-}
-
-func articleHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	var article Article
-	for _, a := range articles {
-		if a.ID == id {
-			article = a
-			break
-		}
-	}
-
-	if article.ID == 0 {
-		http.NotFound(w, r)
-		return
-	}
-
-	comments := getCommentsByArticleID(article.ID)
-
-	data := struct {
-		Article  Article
-		Comments []Comment
-	}{
-		Article:  article,
-		Comments: comments,
-	}
-
-	renderTemplate(w, "article.html", data)
-}
-
-func newArticleHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "POST" {
-		title := r.FormValue("title")
-		content := r.FormValue("content")
-		author := r.FormValue("author")
-
-		article := Article{
-			ID:        getNextArticleID(),
-			Title:     title,
-			Content:   content,
-			Author:    author,
-			CreatedAt: time.Now(),
-		}
-
-		articles = append(articles, article)
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
-
-	renderTemplate(w, "new_article.html", nil)
-}
-
-func newCommentHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	article := getArticleByID(id)
-	if article.ID == 0 {
-		http.NotFound(w, r)
-		return
-	}
-
-	content := r.FormValue("content")
-	author := r.FormValue("author")
-
-	comment := Comment{
-		ID:        getNextCommentID(),
-		ArticleID: article.ID,
-		Content:   content,
-		Author:    author,
-		CreatedAt: time.Now(),
-	}
-
-	comments = append(comments, comment)
-
-	redirectURL := fmt.Sprintf("/article/%d", article.ID)
-	http.Redirect(w, r, redirectURL, http.StatusFound)
-}
-
-func getArticleByID(id int) Article {
-	for _, a := range articles {
-		if a.ID == id {
-			return a
-		}
-	}
-	return Article{}
-}
-
-func getCommentsByArticleID(articleID int) []Comment {
-	var result []Comment
-	for _, c := range comments {
-		if c.ArticleID == articleID {
-			result = append(result, c)
-		}
-	}
-	return result
-}
-
-func renderTemplate(w http.ResponseWriter, tmpl string, data interface{}) {
-	err := templates.ExecuteTemplate(w, tmpl, data)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-}
-
-func editArticleHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	article := getArticleByID(id)
-	if article.ID == 0 {
-		http.NotFound(w, r)
-		return
-	}
-
-	if r.Method == "POST" {
-		title := r.FormValue("title")
-		content := r.FormValue("content")
-		author := r.FormValue("author")
-
-		article.Title = title
-		article.Content = content
-		article.Author = author
-
-		redirectURL := fmt.Sprintf("/article/%d", article.ID)
-		http.Redirect(w, r, redirectURL, http.StatusFound)
-		return
-	}
-
-	data := struct {
-		Article Article
-	}{
-		Article: article,
-	}
-
-	renderTemplate(w, "edit_article.html", data)
-}
-
-func deleteArticleHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	article := getArticleByID(id)
-	if article.ID == 0 {
-		http.NotFound(w, r)
-		return
-	}
-
-	// Delete the article
-	for i, a := range articles {
-		if a.ID == id {
-			articles = append(articles[:i], articles[i+1:]...)
-			break
-		}
-	}
-
-	// Delete related comments
-	for i, c := range comments {
-		if c.ArticleID == id {
-			comments = append(comments[:i], comments[i+1:]...)
-		}
-	}
-
-	http.Redirect(w, r, "/", http.StatusFound)
-}
-
-type Article struct {
-	gorm.Model
-	Title    string
-	Content  string
-	Author   string
-	Comments []Comment
-}
-
-type Comment struct {
-	gorm.Model
+	ID        uint `gorm:"primaryKey;autoIncrement"`
 	ArticleID uint
 	Content   string
+	CreatedAt time.Time
 	Author    string
 }
 
-var db *gorm.DB
+//type Comment struct {
+//	ID        uint `gorm:"primaryKey;autoIncrement"`
+//	ArticleID uint
+//	Content   string
+//	CreatedAt time.Time
+//}
 
 func main() {
-	// ...
-
-	// Connect to the database
-	dsn := "user:password@tcp(localhost:3306)/blog_db?charset=utf8mb4&parseTime=True&loc=Local"
+	dsn := "root:123456@tcp(192.168.0.113:3306)/aoms?charset=utf8mb4&parseTime=True&loc=Local"
 	var err error
 	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Auto migrate the models to create corresponding tables
+	// 自动迁移数据库
 	err = db.AutoMigrate(&Article{}, &Comment{})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// ...
+	router := mux.NewRouter()
 
-	// Define routes
-	router.HandleFunc("/", homeHandler).Methods("GET")
-	router.HandleFunc("/article/{id}", articleHandler).Methods("GET")
-	router.HandleFunc("/new-article", newArticleHandler).Methods("GET", "POST")
-	router.HandleFunc("/edit-article/{id}", editArticleHandler).Methods("GET", "POST")
-	router.HandleFunc("/delete-article/{id}", deleteArticleHandler).Methods("POST")
+	router.HandleFunc("/", HomeHandler).Methods("GET")
+	router.HandleFunc("/articles", ArticlesHandler).Methods("GET")
+	router.HandleFunc("/articles/{id}", GetArticleHandler).Methods("GET")
+	router.HandleFunc("/articles", CreateArticleHandler).Methods("POST")
+	router.HandleFunc("/articles/{id}", UpdateArticleHandler).Methods("PUT")
+	router.HandleFunc("/articles/{id}", DeleteArticleHandler).Methods("DELETE")
+	router.HandleFunc("/new-article", authMiddleware(newArticleHandler)).Methods("GET", "POST")
+	router.HandleFunc("/edit-article/{id}", authMiddleware(editArticleHandler)).Methods("GET", "POST")
+	router.HandleFunc("/delete-article/{id}", authMiddleware(deleteArticleHandler)).Methods("POST")
 	router.HandleFunc("/new-comment/{id}", newCommentHandler).Methods("POST")
+	router.HandleFunc("/register", registerHandler).Methods("GET", "POST")
+	router.HandleFunc("/login", loginHandler).Methods("GET", "POST")
+	router.HandleFunc("/logout", logoutHandler).Methods("GET")
+
+	log.Println("Server started on port 8080")
+	log.Fatal(http.ListenAndServe(":8080", router))
+}
+
+func editArticleHandler(w http.ResponseWriter, r *http.Request) {
+	// ...
+	var article Article // 添加这行
+
+	if r.Method == "POST" {
+		// ...
+
+		// Update the article in the database
+		db.Save(&article)
+
+		redirectURL := fmt.Sprintf("/article/%d", article.ID)
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+		return
+	}
 
 	// ...
 }
 
-func getArticleByID(id int) Article {
-	var article Article
-	db.First(&article, id)
-	return article
-}
+func deleteArticleHandler(w http.ResponseWriter, r *http.Request) {
+	// ...
+	var article Article // 添加这行
 
-func getCommentsByArticleID(articleID int) []Comment {
-	var comments []Comment
-	db.Where("article_id = ?", articleID).Find(&comments)
-	return comments
+	// Delete the article and its related comments from the database
+	db.Delete(&article)
+	db.Delete(&Comment{}, "article_id = ?", article.ID)
+
+	// ...
 }
 
 func newArticleHandler(w http.ResponseWriter, r *http.Request) {
@@ -349,75 +139,6 @@ func newArticleHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	renderTemplate(w, "new_article.html", nil)
-}
-
-func editArticleHandler(w http.ResponseWriter, r *http.Request) {
-	// ...
-
-	if r.Method == "POST" {
-		// ...
-
-		// Update the article in the database
-		db.Save(&article)
-
-		redirectURL := fmt.Sprintf("/article/%d", article.ID)
-		http.Redirect(w, r, redirectURL, http.StatusFound)
-		return
-	}
-
-	// ...
-}
-
-func deleteArticleHandler(w http.ResponseWriter, r *http.Request) {
-	// ...
-
-	// Delete the article and its related comments from the database
-	db.Delete(&article)
-	db.Delete(&Comment{}, "article_id = ?", article.ID)
-
-	// ...
-}
-
-type User struct {
-	gorm.Model
-	Username string `gorm:"unique"`
-	Password string
-}
-
-type Pagination struct {
-	TotalPages   int
-	CurrentPage  int
-	PageSize     int
-	TotalRecords int
-}
-
-const pageSize = 10
-
-// ...
-
-func main() {
-	// ...
-
-	// Auto migrate the models to create corresponding tables
-	err = db.AutoMigrate(&Article{}, &Comment{}, &User{})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// ...
-
-	// Define routes
-	router.HandleFunc("/", homeHandler).Methods("GET")
-	router.HandleFunc("/article/{id}", articleHandler).Methods("GET")
-	router.HandleFunc("/new-article", authMiddleware(newArticleHandler)).Methods("GET", "POST")
-	router.HandleFunc("/edit-article/{id}", authMiddleware(editArticleHandler)).Methods("GET", "POST")
-	router.HandleFunc("/delete-article/{id}", authMiddleware(deleteArticleHandler)).Methods("POST")
-	router.HandleFunc("/new-comment/{id}", newCommentHandler).Methods("POST")
-	router.HandleFunc("/register", registerHandler).Methods("GET", "POST")
-	router.HandleFunc("/login", loginHandler).Methods("GET", "POST")
-	router.HandleFunc("/logout", logoutHandler).Methods("GET")
-
-	// ...
 }
 
 func registerHandler(w http.ResponseWriter, r *http.Request) {
@@ -445,6 +166,21 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	renderTemplate(w, "register.html", nil)
+}
+func renderTemplate(w http.ResponseWriter, tmpl string, data interface{}) {
+	t, err := template.ParseFiles(tmpl)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	err = t.Execute(w, data)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
@@ -500,50 +236,206 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		next(w, r)
 	}
 }
+func getArticleByID(id int) Article {
+	var article Article
+	db.Preload("Comments").First(&article, id)
+	return article
+}
 
-func homeHandler(w http.ResponseWriter, r *http.Request) {
-	page := getPageNumber(r)
+func newCommentHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
 
+	article := getArticleByID(id)
+	if article.ID == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	content := r.FormValue("content")
+	author := r.FormValue("author")
+
+	comment := Comment{
+		ArticleID: article.ID,
+		Content:   content,
+		Author:    author,
+		CreatedAt: time.Now(),
+	}
+
+	db.Create(&comment)
+
+	redirectURL := fmt.Sprintf("/article/%d", article.ID)
+	http.Redirect(w, r, redirectURL, http.StatusFound)
+}
+
+func HomeHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Welcome to the Blog!")
+}
+
+func ArticlesHandler(w http.ResponseWriter, r *http.Request) {
 	var articles []Article
-	db.Offset((page - 1) * pageSize).Limit(pageSize).Order("created_at desc").Find(&articles)
+	var count int64
 
-	var totalRecords int64
-	db.Model(&Article{}).Count(&totalRecords)
+	// 获取分页参数
+	page, _ := strconv.Atoi(r.FormValue("page"))
+	pageSize, _ := strconv.Atoi(r.FormValue("page_size"))
 
-	pagination := calculatePagination(page, int(totalRecords))
+	// 计算偏移量
+	offset := (page - 1) * pageSize
 
-	data := struct {
-		Articles   []Article
-		Pagination Pagination
-	}{
-		Articles:   articles,
-		Pagination: pagination,
+	// 查询文章列表和总记录数
+	db.Preload("Comments").Limit(pageSize).Offset(offset).Find(&articles)
+	db.Model(&Article{}).Count(&count)
+
+	// 构建文章列表视图模型
+	type ArticleViewModel struct {
+		ID           uint
+		Title        string
+		Content      string
+		Author       string
+		CreatedAt    time.Time
+		CommentCount int
 	}
 
-	renderTemplate(w, "home.html", data)
-}
-
-func calculatePagination(page, totalRecords int) Pagination {
-	totalPages := int(math.Ceil(float64(totalRecords) / float64(pageSize)))
-
-	return Pagination{
-		TotalPages:   totalPages,
-		CurrentPage:  page,
-		PageSize:     pageSize,
-		TotalRecords: totalRecords,
-	}
-}
-
-func getPageNumber(r *http.Request) int {
-	page := 1
-
-	pageParam := r.URL.Query().Get("page")
-	if pageParam != "" {
-		p, err := strconv.Atoi(pageParam)
-		if err == nil && p > 0 {
-			page = p
+	var articleVMs []ArticleViewModel
+	for _, article := range articles {
+		articleVM := ArticleViewModel{
+			ID:           article.ID,
+			Title:        article.Title,
+			Content:      article.Content,
+			Author:       article.Author,
+			CreatedAt:    article.CreatedAt,
+			CommentCount: len(article.Comments),
 		}
+		articleVMs = append(articleVMs, articleVM)
 	}
 
-	return page
+	// 构建文章列表页面模板
+	tmpl := template.Must(template.ParseFiles("articles.html"))
+	data := struct {
+		Articles    []ArticleViewModel
+		TotalCount  int64
+		CurrentPage int
+		HasPrevious bool
+		HasNext     bool
+	}{
+		Articles:    articleVMs,
+		TotalCount:  count,
+		CurrentPage: page,
+		HasPrevious: page > 1,
+		HasNext:     int(count)/pageSize >= page,
+	}
+
+	// 渲染模板并返回给客户端
+	err := tmpl.Execute(w, data)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+}
+
+func GetArticleHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	var article Article
+	db.Preload("Comments").First(&article, id)
+
+	// 检查文章是否存在
+	if article.ID == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	// 构建文章详情页面模板
+	tmpl := template.Must(template.ParseFiles("article.html"))
+	err := tmpl.Execute(w, article)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+}
+
+func CreateArticleHandler(w http.ResponseWriter, r *http.Request) {
+	// 解析请求数据
+	err := r.ParseForm()
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	// 提取表单数据
+	title := r.FormValue("title")
+	content := r.FormValue("content")
+	author := r.FormValue("author")
+
+	// 创建文章
+	article := Article{
+		Title:   title,
+		Content: content,
+		Author:  author,
+	}
+	db.Create(&article)
+
+	// 返回成功响应
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprintf(w, "Article created successfully")
+}
+
+func UpdateArticleHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	// 查询文章
+	var article Article
+	db.First(&article, id)
+
+	// 检查文章是否存在
+	if article.ID == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	// 解析请求数据
+	err := r.ParseForm()
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	// 更新文章
+	article.Title = r.FormValue("title")
+	article.Content = r.FormValue("content")
+	article.Author = r.FormValue("author")
+	db.Save(&article)
+
+	// 返回成功响应
+	fmt.Fprintf(w, "Article updated successfully")
+}
+
+func DeleteArticleHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, _ := strconv.Atoi(vars["id"])
+
+	// 查询文章
+	var article Article
+	db.First(&article, id)
+
+	// 检查文章是否存在
+	if article.ID == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	// 删除文章
+	db.Delete(&article)
+
+	// 返回成功响应
+	fmt.Fprintf(w, "Article deleted successfully")
 }

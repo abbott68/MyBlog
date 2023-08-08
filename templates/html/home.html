@@ -1,0 +1,35 @@
+<!-- home.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Blog</title>
+</head>
+<body>
+<h1>Blog</h1>
+
+<h2>Articles</h2>
+{{range .Articles}}
+<div>
+  <h3>{{.Title}}</h3>
+  <p>{{.Content}}</p>
+  <p>Author: {{.Author}}</p>
+  <p>Created At: {{.CreatedAt}}</p>
+  <a href="/article/{{.ID}}">Read More</a>
+</div>
+{{end}}
+
+<div>
+  <ul class="pagination">
+    {{if gt .Pagination.TotalPages 1}}
+    {{range $i, $p := .Pagination.Pages}}
+    {{if eq $p .Pagination.CurrentPage}}
+    <li class="active"><a href="?page={{$p}}">{{$p}}</a></li>
+    {{else}}
+    <li><a href="?page={{$p}}">{{$p}}</a></li>
+    {{end}}
+    {{end}}
+    {{end}}
+  </ul>
+</div>
+</body>
+</html>
